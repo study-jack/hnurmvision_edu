@@ -14,9 +14,12 @@ target_include_directories(training_io PUBLIC include io ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(training_io Eigen3::Eigen yaml-cpp ${OpenCV_LIBS})
 ament_target_dependencies(training_io rclcpp sensor_msgs hnurm_interfaces)
 target_compile_options(training_io PRIVATE -Wall -Wextra -Wpedantic)
+set(ORT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime")
 add_library(training_lessons lessons/lesson02_io.cpp
- lessons/lesson03_detection.cpp lessons/lesson04_tracking.cpp
- lessons/lesson05_aiming.cpp)
-target_link_libraries(training_lessons PUBLIC training_io)
+ lessons/lesson03_detection.cpp lessons/lesson03_detection_yolo.cpp
+ lessons/lesson04_tracking.cpp lessons/lesson05_aiming.cpp)
+target_include_directories(training_lessons PRIVATE "${ORT_ROOT}/include")
+target_link_libraries(training_lessons PUBLIC training_io "${ORT_ROOT}/lib/libonnxruntime.so")
 add_executable(training src/main.cpp)
 target_link_libraries(training PRIVATE training_lessons)
+set_target_properties(training PROPERTIES BUILD_RPATH "${ORT_ROOT}/lib")

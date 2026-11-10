@@ -23,6 +23,7 @@ struct SensorData {
   cv::Mat image;  // CV_8UC3，BGR，独立拥有像素内存
   TimePoint timestamp{};
   Eigen::Quaterniond imu_q = Eigen::Quaterniond::Identity();
+  std::array<double, 3> rpy_deg{};  // 仿真原始 roll/pitch/yaw（度），用于闭环校正
   double bullet_speed = 0;  // m/s
 };
 

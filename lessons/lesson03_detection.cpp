@@ -12,17 +12,19 @@ namespace {
 
 // ===== 可调阈值 =====
 constexpr float kMinBarAspect = 1.3f;     // 灯条长宽比下限
-constexpr float kMaxBarAspect = 18.0f;    // 长宽比上限：场地白/蓝线是细长条，必须排除
-constexpr float kMinBarArea = 12.0f;      // 灯条像素面积下限
+constexpr float kMaxBarAspect = 12.0f;     // 长宽比上限：场地白/蓝线是细长条，必须排除
+constexpr float kMinBarArea = 20.0f;      // 灯条像素面积下限
 constexpr float kMaxBarLength = 240.0f;   // 灯条像素长度上限（3 m 处约 30 px）
-constexpr float kMaxBarArea = 1400.0f;    // 排除场地线条/大色块，3 m 处灯条约 20-60 px
-constexpr float kMinBarFill = 0.35f;      // 轮廓面积 / 最小外接矩形面积
-constexpr float kMaxLenRatio = 2.0f;      // 两根灯条长度之比
-constexpr float kMaxYDiffRatio = 0.60f;   // 两灯条中心纵向偏差 / 平均灯条长度
-constexpr float kMinWidthRatio = 0.3f;    // 灯条间距 / 平均灯条长度
-constexpr float kMaxWidthRatio = 8.0f;    // 小目标/透视压缩时两灯条间距会显得很大
-constexpr float kLargeArmorRatio = 2.3f;  // 超过此值判定为大装甲板
-constexpr float kMinParallel = 0.70f;     // 长轴平行度与正交性下限
+constexpr float kMaxBarArea = 1400.0f;     // 排除场地线条/大色块，3 m 处灯条约 20-60 px
+constexpr float kMinBarFill = 0.45f;      // 轮廓面积 / 最小外接矩形面积
+constexpr float kMaxLenRatio = 1.6f;      // 两根灯条长度之比
+constexpr float kMaxYDiffRatio = 0.60f;   // 两灯条中心纵向偏差 / 灯条间距
+constexpr float kMinWidthRatio = 0.8f;    // 灯条间距 / 平均灯条长度
+constexpr float kMaxWidthRatio = 2.8f;    // 装甲板宽高比的合理范围
+constexpr float kLargeArmorRatio = 2.0f;  // 超过此值判定为大装甲板
+constexpr float kMinParallel = 0.72f;     // 长轴平行度与正交性下限
+constexpr float kMaxHueDiff = 20.0f;      // 同一块装甲两条灯条的色相差上限
+constexpr float kMinBarBrightness = 110.0f; // 灯条平均亮度下限
 
 struct LightBar {
   cv::Point2f center;
@@ -30,6 +32,8 @@ struct LightBar {
   float length = 0;   // 长边
   float width = 0;    // 短边
   float score = 0;
+  float mean_h = 0;   // 轮廓内平均色相
+  float mean_v = 0;   // 轮廓内平均亮度
   int color = -1;     // 0 红，1 蓝
 };
 
@@ -63,12 +67,12 @@ std::vector<LightBar> extractBars(const cv::Mat& hsv, int color,
   if (color == 0) {
     // 红方装甲：仿真渲染下红/橙灯条落在 H≈0-35 与 165-180 两段。
     cv::Mat low, high;
-    cv::inRange(hsv, cv::Scalar(0, 110, 110), cv::Scalar(35, 255, 255), low);
-    cv::inRange(hsv, cv::Scalar(165, 110, 110), cv::Scalar(180, 255, 255), high);
+    cv::inRange(hsv, cv::Scalar(0, 100, 100), cv::Scalar(35, 255, 255), low);
+    cv::inRange(hsv, cv::Scalar(165, 100, 100), cv::Scalar(180, 255, 255), high);
     cv::bitwise_or(low, high, mask);
   } else {
     // 蓝方装甲：H≈80-145；灯条实际偏青（H≈90），不能从 92 起。
-    cv::inRange(hsv, cv::Scalar(80, 110, 110), cv::Scalar(145, 255, 255), mask);
+    cv::inRange(hsv, cv::Scalar(80, 100, 100), cv::Scalar(145, 255, 255), mask);
   }
 
   const cv::Mat kernel =
@@ -97,6 +101,8 @@ std::vector<LightBar> extractBars(const cv::Mat& hsv, int color,
     if (aspect < kMinBarAspect || aspect > kMaxBarAspect) continue;
     const float fill = area / (w * h + 1e-6f);
     if (fill < kMinBarFill) continue;
+    // 场地线通常只有 2-3 px 宽；灯条要求有实体宽度。
+    if (width < 2.0f || width > 25.0f) continue;
 
     cv::Point2f pts[4];
     rect.points(pts);
@@ -112,6 +118,14 @@ std::vector<LightBar> extractBars(const cv::Mat& hsv, int color,
     bar.color = color;
     bar.score = clamp01(0.4f + 0.2f * (length / width - kMinBarAspect) +
                         0.5f * (fill - kMinBarFill));
+
+    // 灯条内部的平均色相/亮度，用于剔除场地线与不同色的伪配对。
+    const cv::Rect brect = rect.boundingRect() & cv::Rect(0, 0, hsv.cols, hsv.rows);
+    if (brect.area() > 0) {
+      const cv::Scalar mean = cv::mean(hsv(brect), mask(brect));
+      bar.mean_h = static_cast<float>(mean[0]);
+      bar.mean_v = static_cast<float>(mean[2]);
+    }
     bars.push_back(bar);
   }
   return bars;
@@ -173,7 +187,7 @@ cv::Rect quadBox(const std::array<cv::Point2f, 4>& corners) {
 
 }  // namespace
 
-std::vector<Armor> lesson03_detection(const cv::Mat& image) {
+std::vector<Armor> lesson03_detection_opencv(const cv::Mat& image) {
   std::vector<Armor> armors;
   if (image.empty() || image.type() != CV_8UC3) return armors;
 
@@ -198,6 +212,12 @@ std::vector<Armor> lesson03_detection(const cv::Mat& image) {
       const LightBar& a = bars[i];
       const LightBar& b = bars[j];
       if (a.color != b.color) continue;
+
+      // 同一块装甲的两条灯条颜色必须一致，且都要足够亮。
+      float hue_diff = std::fabs(a.mean_h - b.mean_h);
+      hue_diff = std::min(hue_diff, 180.0f - hue_diff);
+      if (hue_diff > kMaxHueDiff) continue;
+      if (std::min(a.mean_v, b.mean_v) < kMinBarBrightness) continue;
 
       const float avg_len = (a.length + b.length) * 0.5f;
       if (avg_len < 6.0f) continue;
@@ -225,7 +245,7 @@ std::vector<Armor> lesson03_detection(const cv::Mat& image) {
       const bool a_is_left = a.center.x <= b.center.x;
       Armor armor;
       armor.corners = a_is_left ? armorCorners(a, b) : armorCorners(b, a);
-      if (quadArea(armor.corners) < 40.0f) continue;
+      if (quadArea(armor.corners) < 80.0f) continue;
 
       const float width_ratio = distance / avg_len;
       armor.large_armor = width_ratio > kLargeArmorRatio;
@@ -243,7 +263,7 @@ std::vector<Armor> lesson03_detection(const cv::Mat& image) {
                         (kMaxWidthRatio - kLargeArmorRatio));
       armor.confidence = clamp01(0.15f + 0.35f * size_term + 0.30f * angle_term +
                                  0.20f * width_term);
-      if (armor.confidence < 0.35f) continue;
+      if (armor.confidence < 0.45f) continue;
 
       candidates.push_back(armor);
     }
@@ -257,16 +277,19 @@ std::vector<Armor> lesson03_detection(const cv::Mat& image) {
   for (const Armor& candidate : candidates) {
     const cv::Rect box = quadBox(candidate.corners);
     bool duplicate = false;
-    for (const Armor& kept : armors) {
+    for (Armor& kept : armors) {
       const cv::Rect kept_box = quadBox(kept.corners);
       const int inter = (box & kept_box).area();
       if (inter > 0 && inter > 0.55f * std::min(box.area(), kept_box.area())) {
+        // 同一块装甲出现「紧框 + 跨板大框」时，保留更紧的那个。
+        if (box.area() < kept_box.area()) kept = candidate;
         duplicate = true;
         break;
       }
     }
     if (!duplicate) armors.push_back(candidate);
   }
+
   return armors;
 }
 

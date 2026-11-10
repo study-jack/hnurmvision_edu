@@ -98,6 +98,7 @@ std::optional<SensorData> IoContext::read() {
       data.imu_q = latest_imu_q;
       data.bullet_speed = latest_bullet_speed;
       rpy = latest_rpy_deg;
+      data.rpy_deg = latest_rpy_deg;
       latest_image.release();  // 下一帧重新分配，不让两份像素常驻
       fresh_image = false;
     }
