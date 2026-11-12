@@ -109,3 +109,30 @@ simulation/simulator/bin/daedalus
 
 仿真场景和靶车由 `simulation/simulator/config.toml` 配置。`[training] enabled=true` 时生成
 教学观察车和训练靶，设为 `false` 时回到手动场景。
+
+## ONNX Runtime 依赖（已随仓库提供）
+
+`third_party/onnxruntime/` 内置 CPU 版 ONNX Runtime 1.23.2，无需另外安装 SDK：
+
+```text
+third_party/onnxruntime/
+├── include/                        # C/C++ API 头文件
+└── lib/
+    ├── libonnxruntime.so.1.23.2    # CPU 推理库
+    ├── libonnxruntime.so.1 -> libonnxruntime.so.1.23.2
+    └── libonnxruntime.so -> libonnxruntime.so.1
+```
+
+`CMakeLists.txt` 用 `${ORT_ROOT}` 指向该目录并设置 `BUILD_RPATH`，编译产物可直接运行。
+若要用 GPU 推理：把 `lib/` 换成 onnxruntime-gpu 的同名库，并把
+`libonnxruntime_providers_cuda.so`、cuDNN/cuBLAS 运行库放进同一目录即可，代码与模型无需修改。
+
+模型默认读取 `assets/armor_pose.onnx`，可用环境变量 `ARMOR_ONNX` 指向其他模型；
+设置 `ARMOR_DETECTOR=opencv` 可强制使用 OpenCV 兜底检测，便于对比效果。
+
+## 换机器复现步骤
+
+1. 按上文「编译 → 1. 编译培训主程序」执行 `./scripts/build_training.sh`；
+2. 需要看仿真画面时再执行 `./scripts/build_simulator.sh`（耗时较长）；
+3. 两个终端分别运行 `./scripts/run_simulator.sh` 与 `./scripts/run_training.sh`；
+4. 培训窗口里绿色框为大装甲板、橙色框为小装甲板，标签为类别（B1–B5/BO/BS/R1–R5/RO/RS）与置信度。
